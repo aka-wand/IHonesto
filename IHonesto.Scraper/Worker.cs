@@ -13,11 +13,17 @@ namespace IHonesto.Scrapper
         private readonly PersistenceContext _context;
         private readonly IConfiguration _configuration;
 
+        private readonly ChromeOptions _webdriverOptions;
+        private readonly Uri _webdriverUri;
+
         public Worker(ILogger<Worker> logger, PersistenceContext context, IConfiguration configuration)
         {
             _logger = logger;
             _context = context;
             _configuration = configuration;
+            _webdriverOptions = new ChromeOptions();
+            _webdriverOptions.AddArgument("no-sandbox");
+            _webdriverUri = new Uri(_configuration.GetConnectionString("WebDriver"));
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -57,41 +63,71 @@ namespace IHonesto.Scrapper
 
         internal async Task ScanPage(int productId, Uri uri, IEnumerable<Strategy> strategies)
         {
-            var options = new ChromeOptions();
-            var remote = new Uri(_configuration.GetConnectionString("WebDriver"));
-            var price = String.Empty;
-
-            using (var driver = new RemoteWebDriver(remote, options))
+            var scan = new Scan
             {
-                driver.Url = uri.ToString();
+                CreatedAt = DateTime.Now,
+                ProductId = productId,
+                Metadados = "{}",
+            };
 
-                foreach (var strategy in strategies)
+            try
+            {
+                var price = String.Empty;
+
+                using (var driver = new RemoteWebDriver(_webdriverUri, _webdriverOptions))
                 {
-                    switch (strategy.Kind)
-                    {
-                        case Strategy.StrategyKind.Xpath:
-                            var element = driver.FindElement(By.XPath(strategy.Parameter));
-                            price = Regex.Match(element.Text, @"R\$ ?\d{1,3}(\.\d{3})*,\d{2}").ToString();
-                            break;
-                    }
+                    driver.Url = uri.ToString();
 
-                    if (!String.IsNullOrEmpty(price))
+                    foreach (var strategy in strategies)
                     {
-                        var scan = new Scan
+                        try
                         {
-                            Price = price,
-                            CreatedAt = DateTime.Now,
-                            PlataformId = strategy.PlataformId,
-                            ProductId = productId,
-                            Metadados = "{}",
-                            Status = Scan.StatusCode.Success,
-                            StrategyId = strategy.Id
-                        };
+                            scan.StrategyId = strategy.Id;
+                            scan.PlataformId = strategy.PlataformId;
 
-                        await _context.Scan.Insert(scan);
-                        break;
-                    };
+                            switch (strategy.Kind)
+                            {
+                                case Strategy.StrategyKind.Xpath:
+                                    var xpath_element = driver.FindElement(By.XPath(strategy.Parameter));
+                                    price = Regex.Match(xpath_element.Text, @"R\$ ?\d{1,3}(\.\d{3})*,\d{2}").ToString();
+                                    break;
+                                case Strategy.StrategyKind.CssSelector:
+                                    var css_selector_element = driver.FindElement(By.CssSelector(strategy.Parameter));
+                                    price = Regex.Match(css_selector_element.Text, @"R\$ ?\d{1,3}(\.\d{3})*,\d{2}").ToString();
+                                    break;
+                            }
+
+                            if (!String.IsNullOrEmpty(price))
+                            {
+                                scan.Price = price;
+                                await _context.Scan.Insert(scan);
+                                break;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            await _context.Scan.InsertError(new ScanError
+                            {
+                                CreatedAt = DateTime.Now,
+                                Message = ex.ToString(),
+                                PlataformId = scan.PlataformId,
+                                ProductId = scan.ProductId,
+                                StrategyId = scan.StrategyId,
+                            });
+                        }
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                await _context.Scan.InsertError(new ScanError
+                {
+                    CreatedAt = DateTime.Now,
+                    Message = ex.ToString(),
+                    PlataformId = scan.PlataformId,
+                    ProductId = scan.ProductId,
+                    StrategyId = scan.StrategyId,
+                });
             }
         }
     }

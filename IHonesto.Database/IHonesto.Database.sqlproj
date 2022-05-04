@@ -65,5 +65,6 @@
     <Build Include="Tables\TB_PRODUCTS_PLATAFORM.sql" />
     <Build Include="Tables\TB_SCANS.sql" />
     <Build Include="Tables\TB_STRATEGIES.sql" />
+    <Build Include="Tables\TB_SCANS_ERRORS.sql" />
   </ItemGroup>
 </Project>

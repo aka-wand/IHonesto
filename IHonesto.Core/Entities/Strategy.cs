@@ -5,6 +5,7 @@
         public enum StrategyKind
         {
             Xpath = 0,
+            CssSelector
         }
 
         public int Id { get; set; }
